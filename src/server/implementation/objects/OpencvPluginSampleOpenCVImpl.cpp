@@ -8,6 +8,14 @@
 #include <sstream>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
+
+#include "opencv2/objdetect.hpp"
+#include "opencv2/highgui.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/videoio.hpp"
+
+#include <curl/curl.h>
+
 #define f_face_bracket_x 0.25
 #define f_face_bracket_y 0.25
 
@@ -35,7 +43,7 @@ OpencvPluginSampleOpenCVImpl::OpencvPluginSampleOpenCVImpl ()
 
 int l=0;
 int frame_count=0;
-CascadeClassifier c;
+CascadeClassifier f, e;
 void OpencvPluginSampleOpenCVImpl::process (cv::Mat &mat)
 {
 	cv::Mat matimg;
@@ -45,28 +53,59 @@ void OpencvPluginSampleOpenCVImpl::process (cv::Mat &mat)
 	cv::resize(matBN,matBN,cv::Size(matBN.cols/4,matBN.rows/4));
 
    	static int i=0;
-  
-  	std::string xml_path="/home/Music/haarcascade_frontalface_alt.xml";
+	static int k=0;
+	 int max_files_upload_count=10;
+	 static int file_uploaded=0;
+
+  	std::string xml_path_face="/root/opencv/data/haarcascades/haarcascade_frontalface_alt.xml";
+	std::string xml_path_eye="/root/opencv/data/haarcascades/haarcascade_eye_tree_eyeglasses.xml";
 	if(i==0)
 	{
-		if(c.load(xml_path))
+		if(f.load(xml_path_face))
 	   	{
 			 printf("Loaded xml\n");
 	   	}
 		i++;
 	}
+	if(k==0)
+	{
+		if(e.load(xml_path_eye))
+	   	{
+			 printf("Loaded xml\n");
+	   	}
+		k++;
+	}
+	//post();
 	std::vector<Rect> faces;
 	cv::cvtColor(matBN, matBN, CV_RGB2GRAY);
-	c.detectMultiScale( matBN, faces , 1.1 , 2, 0 | CASCADE_SCALE_IMAGE, Size(matBN.cols/4,matBN.cols/4) );
+	f.detectMultiScale( matBN, faces );
+	//f.detectMultiScale( matBN, faces , 1.1 , 2, 0 | CASCADE_SCALE_IMAGE, Size(matBN.cols/4,matBN.cols/4) );
 	int m=faces.size();
+	Mat frame_gray;
+    cvtColor( matimg, frame_gray, COLOR_BGR2GRAY );
+    equalizeHist( frame_gray, frame_gray );
 	for( int i = 0; i < m; i++ )
 	{
-		char avg[200];
-		sprintf(avg,"%d",filterType);
-		cv::putText(matimg, avg, cv::Point(20,20), cv::FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 255, 0), 1, 8);
-		char filename1[128];
-		sprintf(filename1, "/var/log/kurento-media-server/android_op/result_%06d.jpg", frame_count);
-		cv::imwrite(filename1, matimg);  
+		Point center( faces[i].x + faces[i].width, faces[i].y + faces[i].height );
+        ellipse( matimg, center, Size( faces[i].width, faces[i].height ), 0, 0, 360, Scalar( 255, 0, 255 ), 4 );
+        Mat faceROI = frame_gray( faces[i] );
+
+		std::vector<Rect> eyes;
+        e.detectMultiScale( faceROI, eyes );
+
+	for ( size_t j = 0; j < eyes.size(); j++ )
+        {
+            Point eye_center( faces[i].x + eyes[j].x + eyes[j].width/2, faces[i].y + eyes[j].y + eyes[j].height/2 );
+            int radius = cvRound( (eyes[j].width + eyes[j].height)*0.25 );
+            circle( matimg, eye_center, radius, Scalar( 255, 0, 0 ), 4 );
+        }
+
+		 char avg[200];
+                sprintf(avg,"%d",filterType);
+                cv::putText(matimg, "image classified", cv::Point(20,20), cv::FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 255, 0), 1, 8);
+                char filename1[128];
+                sprintf(filename1, "/tmp/result_%d.jpeg", i);
+                cv::imwrite(filename1, faceROI);
 		frame_count++;
 	}
         if(m > 0)
@@ -81,6 +120,55 @@ void OpencvPluginSampleOpenCVImpl::process (cv::Mat &mat)
 		}
 	}
   	cvtColor (matimg, mat, COLOR_BGR2BGRA);
+	// check for curl post
+	//int max_files_upload_count=10;
+	 //static int file_uploaded=0;
+	if(file_uploaded<max_files_upload_count && m>0){
+	
+	file_uploaded++;
+	CURL *curl;
+  	CURLcode res;
+ 
+  /* In windows, this will init the winsock stuff */ 
+  curl_global_init(CURL_GLOBAL_ALL);
+ 
+  /* get a curl handle */ 
+  curl = curl_easy_init();
+  if(curl) {
+	  printf("curl loaded");
+    /* First set the URL that is about to receive our POST. This URL can
+       just as well be a https:// URL if that is what should receive the
+       data. */ 
+	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
+    curl_easy_setopt(curl, CURLOPT_URL, "http://134.209.159.73:8080/uploadFile");
+
+	 struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "postman-token:99acbcae-6a84-d8b2-4035-c40c32a44825");
+    headers = curl_slist_append(headers, "cache-control: no-cache");
+    headers = curl_slist_append(headers, "content-type:multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+   curl_easy_setopt(curl, CURLOPT_POSTFIELDS,"------WebKitFormBoundary7MA4YWxkTrZu0gW\r\nContent-Disposition: form-data;name=\"result_0.jpeg\"; filename=\"/tmp/result_0.jpeg\"\r\nContent-Type:image/jpeg\r\n\r\n\r\n------WebKitFormBoundary7MA4YWxkTrZu0gW--;data=@/tmp/result_0.jpeg");
+
+    /* Now specify the POST data */ 
+    //curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "name=daniel&project=curl");
+ 
+    /* Perform the request, res will get the return code */ 
+    res = curl_easy_perform(curl);
+    /* Check for errors */ 
+    if(res != CURLE_OK){
+		printf("\n curl success");
+      fprintf(stderr, "curl_easy_perform() failed: %s\n",  curl_easy_strerror(res));
+	}
+ 
+    /* always cleanup */ 
+    curl_easy_cleanup(curl);
+
+  }
+  curl_global_cleanup();
+
+	}
+
+
 }
 
 void OpencvPluginSampleOpenCVImpl::setFilterType (int filterType)
@@ -92,6 +180,12 @@ void OpencvPluginSampleOpenCVImpl::setEdgeThreshold (int edgeValue)
 {
   this->edgeValue = edgeValue;
 }
+void post() {
+}
+
+
+
+
 
 } /* opencvpluginsample */
 } /* module */
